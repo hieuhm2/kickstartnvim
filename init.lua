@@ -681,7 +681,37 @@ require('lazy').setup({
         clangd = {},
         -- gopls = {},
         pyright = {},
-        jdtls = {},
+        jdtls = {
+          cmd = {
+            'jdtls',
+            '-data',
+            vim.fn.stdpath 'data' .. '/jdtls-workspace/' .. vim.fn.fnamemodify(vim.fn.getcwd(), ':p:h:t'),
+            '--jvm-arg=-Xmx4g',
+            '--jvm-arg=-Xms1g',
+            '--jvm-arg=-XX:+UseG1GC',
+            '--jvm-arg=-javaagent:' .. vim.fn.stdpath 'data' .. '/mason/packages/jdtls/lombok.jar',
+          },
+          single_file_support = false,
+          settings = {
+            java = {
+              completion = {
+                importOrder = { 'java', 'javax', 'org', 'com', '' },
+                filteredTypes = { 'com.sun.*', 'io.micrometer.shaded.*', 'java.awt.*', 'jdk.*', 'sun.*' },
+                guessMethodArguments = true,
+              },
+              sources = {
+                organizeImports = {
+                  starThreshold = 9999,
+                  staticStarThreshold = 9999,
+                },
+              },
+              import = {
+                gradle = { enabled = true },
+                maven = { enabled = true },
+              },
+            },
+          },
+        },
         -- rust_analyzer = {},
         -- ... etc. See `:help lspconfig-all` for a list of all the pre-configured LSPs
         --
@@ -844,6 +874,8 @@ require('lazy').setup({
         --
         -- See :h blink-cmp-config-keymap for defining your own keymap
         preset = 'default',
+        -- Accept with <CR> and apply additionalTextEdits (e.g. auto-import from jdtls)
+        ['<CR>'] = { 'accept', 'fallback' },
 
         -- For more advanced Luasnip keymaps (e.g. selecting choice nodes, expansion) see:
         --    https://github.com/L3MON4D3/LuaSnip?tab=readme-ov-file#keymaps
