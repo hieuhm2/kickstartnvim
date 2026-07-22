@@ -747,37 +747,7 @@ require('lazy').setup({
         clangd = {},
         -- gopls = {},
         pyright = {},
-        jdtls = {
-          cmd = {
-            'jdtls',
-            '-data',
-            vim.fn.stdpath 'data' .. '/jdtls-workspace/' .. vim.fn.fnamemodify(vim.fn.getcwd(), ':p:h:t'),
-            '--jvm-arg=-Xmx4g',
-            '--jvm-arg=-Xms1g',
-            '--jvm-arg=-XX:+UseG1GC',
-            '--jvm-arg=-javaagent:' .. vim.fn.stdpath 'data' .. '/mason/packages/jdtls/lombok.jar',
-          },
-          single_file_support = false,
-          settings = {
-            java = {
-              completion = {
-                importOrder = { 'java', 'javax', 'org', 'com', '' },
-                filteredTypes = { 'com.sun.*', 'io.micrometer.shaded.*', 'java.awt.*', 'jdk.*', 'sun.*' },
-                guessMethodArguments = true,
-              },
-              sources = {
-                organizeImports = {
-                  starThreshold = 9999,
-                  staticStarThreshold = 9999,
-                },
-              },
-              import = {
-                gradle = { enabled = true },
-                maven = { enabled = true },
-              },
-            },
-          },
-        },
+        -- jdtls is managed by nvim-jdtls plugin (see below) — do not add it here
         -- rust_analyzer = {},
         -- ... etc. See `:help lspconfig-all` for a list of all the pre-configured LSPs
         --
@@ -819,7 +789,8 @@ require('lazy').setup({
       -- for you, so that they are available from within Neovim.
       local ensure_installed = vim.tbl_keys(servers or {})
       vim.list_extend(ensure_installed, {
-        'stylua', -- Used to format Lua code
+        'stylua',
+        'jdtls', -- installed here; started/managed by nvim-jdtls plugin
       })
       require('mason-tool-installer').setup { ensure_installed = ensure_installed }
 
@@ -828,6 +799,7 @@ require('lazy').setup({
         automatic_installation = false,
         handlers = {
           function(server_name)
+            if server_name == 'jdtls' then return end -- owned by nvim-jdtls
             local server = servers[server_name] or {}
             -- This handles overriding only values explicitly passed
             -- by the server configuration above. Useful when disabling
@@ -837,6 +809,93 @@ require('lazy').setup({
           end,
         },
       }
+    end,
+  },
+
+  { -- Java LSP — dedicated plugin for correct per-project workspace isolation
+    'mfussenegger/nvim-jdtls',
+    ft = 'java',
+    config = function()
+      local jdtls = require 'jdtls'
+
+      local function make_config()
+        local root_dir = require('jdtls.setup').find_root {
+          'settings.gradle', 'settings.gradle.kts',
+          'build.gradle', 'build.gradle.kts',
+          'pom.xml',
+        } or vim.fn.getcwd()
+
+        local project_name = vim.fn.fnamemodify(root_dir, ':t')
+        local workspace = vim.fn.stdpath 'data' .. '/jdtls-workspace/' .. project_name
+
+        -- Collect local JARs from libs/ and thrift/jar/ so jdtls can resolve them
+        local refs = {}
+        for _, pattern in ipairs {
+          root_dir .. '/libs/*.jar',
+          root_dir .. '/thrift/jar/*.jar',
+          root_dir .. '/thrift/javaV8ThriftBuildLibs/*.jar',
+        } do
+          vim.list_extend(refs, vim.fn.glob(pattern, false, true))
+        end
+
+        return {
+          cmd = {
+            'jdtls',
+            '-data', workspace,
+            '--jvm-arg=-Xmx4g',
+            '--jvm-arg=-Xms1g',
+            '--jvm-arg=-XX:+UseG1GC',
+            '--jvm-arg=-javaagent:' .. vim.fn.stdpath 'data' .. '/mason/packages/jdtls/lombok.jar',
+          },
+          root_dir = root_dir,
+          capabilities = require('blink.cmp').get_lsp_capabilities(),
+          settings = {
+            java = {
+              project = { referencedLibraries = refs },
+              completion = {
+                importOrder = { 'java', 'javax', 'org', 'com', '' },
+                filteredTypes = { 'com.sun.*', 'io.micrometer.shaded.*', 'java.awt.*', 'jdk.*', 'sun.*' },
+                guessMethodArguments = true,
+              },
+              sources = {
+                organizeImports = { starThreshold = 9999, staticStarThreshold = 9999 },
+              },
+              import = {
+                gradle = { enabled = true },
+                maven = { enabled = true },
+              },
+            },
+          },
+          init_options = { bundles = {} },
+        }
+      end
+
+      vim.api.nvim_create_autocmd('FileType', {
+        pattern = 'java',
+        callback = function()
+          jdtls.start_or_attach(make_config())
+        end,
+      })
+
+      -- Trigger immediately for the buffer that caused this plugin to load
+      if vim.bo.filetype == 'java' then
+        jdtls.start_or_attach(make_config())
+      end
+
+      -- Force Gradle reimport (use when jdtls misses new dependencies)
+      vim.keymap.set('n', '<leader>ji', function()
+        jdtls.update_project_config()
+      end, { desc = '[J]ava re[i]mport project' })
+
+      -- Wipe stale workspace cache and restart jdtls
+      vim.keymap.set('n', '<leader>jC', function()
+        local root = require('jdtls.setup').find_root { 'settings.gradle', 'build.gradle', 'pom.xml' }
+        local name = vim.fn.fnamemodify(root or vim.fn.getcwd(), ':t')
+        local ws = vim.fn.stdpath 'data' .. '/jdtls-workspace/' .. name
+        vim.fn.delete(ws, 'rf')
+        vim.cmd 'LspRestart'
+        vim.notify('jdtls: cleared workspace cache for ' .. name, vim.log.levels.INFO)
+      end, { desc = '[J]ava [C]lear workspace cache' })
     end,
   },
 
