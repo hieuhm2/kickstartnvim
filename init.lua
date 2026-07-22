@@ -191,6 +191,72 @@ vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' }
 -- vim.keymap.set('n', '<up>', '<cmd>echo "Use k to move!!"<CR>')
 -- vim.keymap.set('n', '<down>', '<cmd>echo "Use j to move!!"<CR>')
 
+-- Yank the jq-style path (e.g. $.items[0].basic.channel.avatar) of the JSON
+-- value under the cursor, using Treesitter to walk up `pair`/`array` nodes.
+vim.keymap.set('n', '<leader>jq', function()
+  local ok_parser, parser = pcall(vim.treesitter.get_parser)
+  if ok_parser then
+    parser:parse()
+  end
+
+  local node = vim.treesitter.get_node()
+  if not node then
+    vim.notify('No Treesitter node found under cursor', vim.log.levels.WARN)
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  local function key_text(key_node)
+    for child in key_node:iter_children() do
+      if child:type() == 'string_content' then
+        return vim.treesitter.get_node_text(child, bufnr)
+      end
+    end
+    return vim.treesitter.get_node_text(key_node, bufnr):gsub('^"(.*)"$', '%1')
+  end
+
+  local segments = {}
+  while node do
+    local parent = node:parent()
+    if not parent then
+      break
+    end
+
+    if parent:type() == 'pair' then
+      local key_node = parent:field('key')[1]
+      if key_node then
+        table.insert(segments, 1, { kind = 'key', value = key_text(key_node) })
+      end
+    elseif parent:type() == 'array' then
+      for i, child in ipairs(parent:named_children()) do
+        if child:id() == node:id() then
+          table.insert(segments, 1, { kind = 'index', value = i - 1 })
+          break
+        end
+      end
+    end
+
+    node = parent
+  end
+
+  local path = '$'
+  for _, seg in ipairs(segments) do
+    if seg.kind == 'key' then
+      if seg.value:match '^[%a_][%w_]*$' then
+        path = path .. '.' .. seg.value
+      else
+        path = path .. '["' .. seg.value .. '"]'
+      end
+    else
+      path = path .. '[' .. seg.value .. ']'
+    end
+  end
+
+  vim.fn.setreg('+', path)
+  vim.notify(path)
+end, { desc = '[J]son [Q]uery path (yank jq path under cursor)' })
+
 -- Keybinds to make split navigation easier.
 --  Use CTRL+<hjkl> to switch between windows
 --
@@ -1002,6 +1068,7 @@ require('lazy').setup({
   },
   { -- Highlight, edit, and navigate code
     'nvim-treesitter/nvim-treesitter',
+    branch = 'master', -- 'main' rewrite needs Nvim 0.12+/nightly; pin to master for Nvim 0.11 compat
     build = ':TSUpdate',
     -- No need for 'main' field in this case, lazy.nvim will automatically load the plugin.
     opts = {
